@@ -19,3 +19,8 @@ a small warren to an expansive empire on a procedurally-generated world. This ga
  - Biomes (temperature x humidity) and rivers
  - Tile features (ie. Forests, resource deposits, plants & animals)
  - Interactable units and settlements (warrens)
+ - Turn system
+ - Civilization borders
+ - UI panels
+ - Graphics
+ - Government
