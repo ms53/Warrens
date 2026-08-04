@@ -20,6 +20,7 @@ private:
 		mapWorldHeight = height * TileMetrics::Height * 0.75f;
 	}
 	float wrapOffsetX = 0.f;
+	MapSize mapSize;
 
 	struct ContinentSeed { sf::Vector2f pos; float radius; };
 	std::vector<ContinentSeed> generateContinentSeeds(int count, unsigned int seed);
@@ -32,6 +33,8 @@ private:
 	float macroPangaea(const sf::Vector2f& p, Perlin& n) const;
 	float macroFractal(const sf::Vector2f& p, Perlin& n) const;
 
+	float continentalFractal(const sf::Vector2f& p, Perlin& noise) const;
+	sf::Vector2f warpPosition(const sf::Vector2f& pos, Perlin& noise) const;
 
 public:
 	Map(MapSize size);
@@ -42,6 +45,7 @@ public:
 	int getHeight() const { return height; }
 	float getMapWorldWidth() const { return mapWorldWidth; }
 	float getMapWorldHeight() const { return mapWorldHeight; }
+	MapSize getMapSize() const { return mapSize; }
 	Tile* getTile(int x, int y);
 	Tile* getTileAtPosition(const sf::Vector2f& pos);
 	void getNeighbors(int x, int y, std::vector<Tile*>& out);

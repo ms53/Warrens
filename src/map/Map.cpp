@@ -5,6 +5,7 @@
 #include <random>
 Map::Map(MapSize size)
 {
+	mapSize = size;
 	switch (size)
 	{
 	case MapSize::DUEL:     width = 44;  height = 26; break;
@@ -139,7 +140,11 @@ float Map::macroPangaea(const sf::Vector2f& p, Perlin& n) const
 
 float Map::macroFractal(const sf::Vector2f& p, Perlin& n) const
 {
-	return n.octaveNoise(p.x * 0.003f, p.y * 0.003f, 6, 0.5f);
+	float v = n.octaveNoise(p.x * 0.0008f, p.y * 0.0008f, 4, 0.5f);
+
+	// soften into large landmasses
+	v = 0.5f + std::tanh((v - 0.5f) * 3.0f) * 0.5f;
+	return v;
 }
 
 std::vector<Map::ContinentSeed> Map::generateContinentSeeds(int count, unsigned int seed)
@@ -149,7 +154,10 @@ std::vector<Map::ContinentSeed> Map::generateContinentSeeds(int count, unsigned 
 
 	std::uniform_real_distribution<float> xDist(0.f, mapWorldWidth);
 	std::uniform_real_distribution<float> yDist(mapWorldHeight * 0.1f, mapWorldHeight * 0.9f);
-	std::uniform_real_distribution<float> rDist(mapWorldWidth * 0.10f, mapWorldWidth * 0.20f);
+	std::uniform_real_distribution<float> rDist(
+		std::min(mapWorldWidth, mapWorldHeight) * 0.20f,
+		std::min(mapWorldWidth, mapWorldHeight) * 0.35f
+	);
 
 	seeds.reserve(count);
 	for (int i = 0; i < count; i++)
@@ -198,106 +206,463 @@ float Map::continentMask(const sf::Vector2f& pos,
 	return best;
 }
 
+float Map::continentalFractal(const sf::Vector2f& p, Perlin& noise) const
+{
+	float large =
+		noise.octaveNoise(
+			p.x * 0.00035f,
+			p.y * 0.00035f,
+			5,
+			0.55f
+		);
+
+
+	float medium =
+		noise.octaveNoise(
+			p.x * 0.0010f,
+			p.y * 0.0010f,
+			4,
+			0.5f
+		);
+
+
+	float detail =
+		noise.octaveNoise(
+			p.x * 0.0035f,
+			p.y * 0.0035f,
+			3,
+			0.5f
+		);
+
+
+	// Large shapes dominate
+	float result =
+		large * 0.65f +
+		medium * 0.25f +
+		detail * 0.10f;
+
+
+	return result;
+}
+
+sf::Vector2f Map::warpPosition(
+	const sf::Vector2f& p,
+	Perlin& noise
+) const
+{
+	float wx =
+		(noise.octaveNoise(
+			p.x * 0.0008f,
+			p.y * 0.0008f,
+			3,
+			0.5f
+		) - 0.5f) * 250.f;
+
+
+	float wy =
+		(noise.octaveNoise(
+			(p.x + 5000.f) * 0.0008f,
+			(p.y + 5000.f) * 0.0008f,
+			3,
+			0.5f
+		) - 0.5f) * 250.f;
+
+
+	return {
+		p.x + wx,
+		p.y + wy
+	};
+}
+
 void Map::generateTerrain(WorldType type)
 {
+	if (type == WorldType::Pangaea)
+	{
+		throw std::runtime_error(
+			"This world type generation is not implemented yet."
+		);
+	}
+
+	std::vector<ContinentSeed> seeds;
+
 	const WorldGenProfile& profile = getWorldProfile(type);
+
 	Perlin noise(time(nullptr));
 
 	std::vector<float> heights;
 	heights.reserve(tiles.size());
 
-	auto macro = [&](const sf::Vector2f& p) -> float
+
+	// =====================================================
+	// CONTINENT GENERATION
+	// =====================================================
+
+	if (type == WorldType::Continents)
+	{
+		float seaLevel = 0.4f;
+
+
+		for (Tile& tile : tiles)
 		{
-			switch (type)
+			sf::Vector2f pos =
+				tile.getHex().getPosition();
+
+
+			// distort coordinates
+			sf::Vector2f warped =
+				warpPosition(pos, noise);
+
+
+			// ===================================
+			// Continental scale
+			// ===================================
+
+			float continent =
+				continentalFractal(
+					warped,
+					noise
+				);
+
+
+			// make continents larger
+			continent =
+				std::pow(
+					continent,
+					1.35f
+				);
+
+
+			// ===================================
+			// latitude effect
+			// ===================================
+
+			float latitude =
+				std::abs(
+					pos.y / mapWorldHeight - 0.5f
+				);
+
+
+			continent -= latitude * 0.12f;
+
+
+
+			// ===================================
+			// coastline breakup
+			// ===================================
+
+			float coast =
+				noise.octaveNoise(
+					pos.x * 0.0025f,
+					pos.y * 0.0025f,
+					3,
+					0.5f
+				);
+
+
+			continent +=
+				(coast - 0.5f) * 0.20f;
+
+
+
+			// ===================================
+			// land / ocean
+			// ===================================
+
+			if (continent > seaLevel)
 			{
-			case WorldType::Archipelago: return macroArchipelago(p, noise);
-			case WorldType::Continents:   return macroContinents(p, noise);
-			case WorldType::Pangaea:      return macroPangaea(p, noise);
-			case WorldType::Fractal:      return macroFractal(p, noise);
-			case WorldType::Terra:        return macroContinents(p, noise); // hybrid
-			case WorldType::InlandSea:    return 1.0f - macroContinents(p, noise);
+				float elevation =
+					noise.octaveNoise(
+						warped.x * profile.detailScale,
+						warped.y * profile.detailScale,
+						5,
+						0.5f
+					);
+
+
+				// make mountains rarer
+				elevation =
+					std::pow(
+						elevation,
+						1.2f
+					);
+
+
+				// stretch range
+				elevation =
+					elevation * 1.25f;
+
+
+				elevation =
+					std::clamp(
+						elevation,
+						0.f,
+						1.f
+					);
+
+
+				tile.setElevation(elevation);
+
+				heights.push_back(elevation);
 			}
-			return 0.5f;
-		};
-
-	// -------------------------
-	// PASS 1: HEIGHT GENERATION
-	// -------------------------
-	for (Tile& tile : tiles)
-	{
-		sf::Vector2f pos = tile.getHex().getPosition();
-
-		float h = macro(pos);
-
-		// domain warp (optional but now controlled)
-		float warp = noise.octaveNoise(pos.x * 0.0005f, pos.y * 0.0005f, 3, 0.5f);
-		float wx = (warp - 0.5f) * profile.warpStrength * 200.f;
-		float wy = (warp - 0.5f) * profile.warpStrength * 200.f;
-
-		sf::Vector2f warped = { pos.x + wx, pos.y + wy };
-
-		float detail = noise.octaveNoise(
-			warped.x * profile.detailScale,
-			warped.y * profile.detailScale,
-			5, 0.5f
-		);
-
-		h += (detail - 0.5f) * 0.25f;
-
-		h = std::clamp(h, 0.f, 1.f);
-
-		tile.setElevation(h);
-		heights.push_back(h);
-	}
-
-	// -------------------------
-	// PASS 2: SEA LEVELS
-	// -------------------------
-	std::sort(heights.begin(), heights.end());
-
-	auto percentile = [&](float p)
-		{
-			return heights[(size_t)(p * (heights.size() - 1))];
-		};
-
-	float seaLevel = percentile(profile.landBias);
-	float hillLevel = percentile(0.90f);
-	float mountainLevel = percentile(0.97f);
-
-	// -------------------------
-	// PASS 3: CLASSIFICATION
-	// -------------------------
-	for (Tile& tile : tiles)
-	{
-		float h = tile.getElevation();
-
-		Elevation e;
-
-		if (h < seaLevel) e = Elevation::Below_Sea_Level;
-		else if (h < hillLevel) e = Elevation::Flat;
-		else if (h < mountainLevel) e = Elevation::Hill;
-		else e = Elevation::Mountain;
-
-		tile.setElevationType(e);
-
-		switch (e)
-		{
-		case Elevation::Below_Sea_Level:
-			tile.setColor(sf::Color(20, 40, 180));
-			break;
-		case Elevation::Flat:
-			tile.setColor(sf::Color(50, 200, 60));
-			break;
-		case Elevation::Hill:
-			tile.setColor(sf::Color(110, 110, 110));
-			break;
-		case Elevation::Mountain:
-			tile.setColor(sf::Color::White);
-			break;
+			else
+			{
+				tile.setElevation(0.f);
+			}
 		}
 	}
 
-	pruneIsthmuses(seaLevel);
+
+
+	// =====================================================
+	// NORMAL PERLIN WORLDS
+	// =====================================================
+
+	else
+	{
+		auto macro = [&](const sf::Vector2f& p) -> float
+			{
+				switch (type)
+				{
+				case WorldType::Archipelago:
+					return macroArchipelago(p, noise);
+
+				case WorldType::Continents:
+					return macroContinents(p, noise);
+
+				case WorldType::Pangaea:
+					return macroPangaea(p, noise);
+
+				case WorldType::Fractal:
+					return macroFractal(p, noise);
+
+				case WorldType::Terra:
+					return macroContinents(p, noise);
+
+				case WorldType::InlandSea:
+					return 1.0f - macroContinents(p, noise);
+				}
+
+				return 0.5f;
+			};
+
+
+		for (Tile& tile : tiles)
+		{
+			sf::Vector2f pos =
+				tile.getHex().getPosition();
+
+
+			float h =
+				macro(pos);
+
+
+			float warp =
+				noise.octaveNoise(
+					pos.x * 0.0005f,
+					pos.y * 0.0005f,
+					3,
+					0.5f
+				);
+
+
+			float wx =
+				(warp - 0.5f) *
+				profile.warpStrength *
+				200.f;
+
+			float wy =
+				(warp - 0.5f) *
+				profile.warpStrength *
+				200.f;
+
+
+			sf::Vector2f warped =
+			{
+				pos.x + wx,
+				pos.y + wy
+			};
+
+
+			float detail =
+				noise.octaveNoise(
+					warped.x * profile.detailScale,
+					warped.y * profile.detailScale,
+					5,
+					0.5f
+				);
+
+
+			h +=
+				(detail - 0.5f) *
+				0.25f;
+
+
+			h =
+				std::clamp(
+					h,
+					0.f,
+					1.f
+				);
+
+
+			tile.setElevation(h);
+
+			heights.push_back(h);
+		}
+	}
+
+
+
+	// =====================================================
+	// CLASSIFICATION
+	// =====================================================
+
+
+	if (type == WorldType::Continents)
+	{
+		float maxH = 0.f;
+		float minH = 1.f;
+		for (Tile& tile : tiles)
+		{
+			float h =
+				tile.getElevation();
+			if (h > maxH) maxH = h;
+			if (h < minH) minH = h;
+			Elevation e;
+
+
+			if (h <= 0.0f)
+			{
+				e = Elevation::Below_Sea_Level;
+			}
+			else if (h < 0.65f)
+			{
+				e = Elevation::Flat;
+			}
+			else if (h < 0.85f)
+			{
+				e = Elevation::Hill;
+			}
+			else
+			{
+				e = Elevation::Mountain;
+			}
+
+
+			tile.setElevationType(e);
+
+
+			switch (e)
+			{
+			case Elevation::Below_Sea_Level:
+				tile.setColor(sf::Color(20, 40, 180));
+				break;
+
+			case Elevation::Flat:
+				tile.setColor(sf::Color(50, 200, 60));
+				break;
+
+			case Elevation::Hill:
+				tile.setColor(sf::Color(110, 110, 110));
+				break;
+
+			case Elevation::Mountain:
+				tile.setColor(sf::Color::White);
+				break;
+			}
+		}
+		std::cout << "Min Height: " << minH << ", Max Height: " << maxH;
+	}
+
+	else
+	{
+		std::sort(
+			heights.begin(),
+			heights.end()
+		);
+
+
+		auto percentile =
+			[&](float p)
+			{
+				if (heights.empty())
+					return 0.5f;
+
+				return heights[
+					(size_t)
+						(
+							p *
+							(heights.size() - 1)
+							)
+				];
+			};
+
+
+		float seaLevel =
+			percentile(profile.landBias);
+
+
+		float hillLevel =
+			percentile(0.90f);
+
+
+		float mountainLevel =
+			percentile(0.97f);
+
+
+
+		for (Tile& tile : tiles)
+		{
+			float h =
+				tile.getElevation();
+
+
+			Elevation e;
+
+
+			if (h < seaLevel)
+				e = Elevation::Below_Sea_Level;
+
+			else if (h < hillLevel)
+				e = Elevation::Flat;
+
+			else if (h < mountainLevel)
+				e = Elevation::Hill;
+
+			else
+				e = Elevation::Mountain;
+
+
+			tile.setElevationType(e);
+
+
+			switch (e)
+			{
+			case Elevation::Below_Sea_Level:
+				tile.setColor(sf::Color(20, 40, 180));
+				break;
+
+			case Elevation::Flat:
+				tile.setColor(sf::Color(50, 200, 60));
+				break;
+
+			case Elevation::Hill:
+				tile.setColor(sf::Color(110, 110, 110));
+				break;
+
+			case Elevation::Mountain:
+				tile.setColor(sf::Color::White);
+				break;
+			}
+		}
+	}
+
+
+	pruneIsthmuses(
+		type == WorldType::Continents
+		? 0.0f
+		: 0.5f
+	);
 }
 void Map::pruneIsthmuses(float seaLevel)
 {
