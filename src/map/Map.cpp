@@ -147,71 +147,15 @@ float Map::macroFractal(const sf::Vector2f& p, Perlin& n) const
 	return v;
 }
 
-std::vector<Map::ContinentSeed> Map::generateContinentSeeds(int count, unsigned int seed)
-{
-	std::vector<ContinentSeed> seeds;
-	std::mt19937 rng(seed);
-
-	std::uniform_real_distribution<float> xDist(0.f, mapWorldWidth);
-	std::uniform_real_distribution<float> yDist(mapWorldHeight * 0.1f, mapWorldHeight * 0.9f);
-	std::uniform_real_distribution<float> rDist(
-		std::min(mapWorldWidth, mapWorldHeight) * 0.20f,
-		std::min(mapWorldWidth, mapWorldHeight) * 0.35f
-	);
-
-	seeds.reserve(count);
-	for (int i = 0; i < count; i++)
-	{
-		seeds.push_back({ sf::Vector2f(xDist(rng), yDist(rng)), rDist(rng) });
-	}
-
-	return seeds;
-}
-
-float Map::continentMask(const sf::Vector2f& pos,
-	const std::vector<ContinentSeed>& seeds,
-	Perlin& noise) const
-{
-	float best = 0.f;
-
-	for (const ContinentSeed& s : seeds)
-	{
-		float dx = pos.x - s.pos.x;
-		float dy = pos.y - s.pos.y;
-
-		// wrap X
-		dx = std::abs(dx);
-		dx = std::min(dx, mapWorldWidth - dx);
-
-		float dist = std::sqrt(dx * dx + dy * dy);
-
-		float angle = std::atan2(dy, dx);
-
-		float warp = noise.octaveNoise(
-			std::cos(angle) * 2.0f,
-			std::sin(angle) * 2.0f,
-			4, 0.5f);
-
-		float localRadius = s.radius * (0.65f + warp * 0.7f);
-
-		float falloff = 1.f - (dist / localRadius);
-		falloff = std::clamp(falloff, 0.f, 1.f);
-
-		// keep smoothstep (good choice)
-		falloff = falloff * falloff * (3.f - 2.f * falloff);
-
-		best = std::max(best, falloff);
-	}
-
-	return best;
-}
 
 float Map::continentalFractal(const sf::Vector2f& p, Perlin& noise) const
 {
+
+	float continentScale = 3.0f / mapWorldWidth; // NOTE!!! NUMERATOR MAY NEED TO BE ADJUSTED (IE. continentScale < 0.001f)
 	float large =
 		noise.octaveNoise(
-			p.x * 0.00035f,
-			p.y * 0.00035f,
+			p.x * continentScale,
+			p.y * continentScale,
 			5,
 			0.55f
 		);
@@ -219,8 +163,8 @@ float Map::continentalFractal(const sf::Vector2f& p, Perlin& noise) const
 
 	float medium =
 		noise.octaveNoise(
-			p.x * 0.0010f,
-			p.y * 0.0010f,
+			p.x * 0.00065f,
+			p.y * 0.00065f,
 			4,
 			0.5f
 		);
@@ -328,7 +272,7 @@ void Map::generateTerrain(WorldType type)
 			continent =
 				std::pow(
 					continent,
-					1.35f
+					1.3f //Originally 1.35f
 				);
 
 
@@ -370,26 +314,46 @@ void Map::generateTerrain(WorldType type)
 
 			if (continent > seaLevel)
 			{
-				float elevation =
+				float elevationLarge =
 					noise.octaveNoise(
-						warped.x * profile.detailScale,
-						warped.y * profile.detailScale,
-						5,
+						warped.x * 0.0009f,
+						warped.y * 0.0009f,
+						4,
+						0.55f
+					);
+
+				float elevationMedium =
+					noise.octaveNoise(
+						warped.x * 0.0020f,
+						warped.y * 0.0020f,
+						3,
 						0.5f
 					);
+
+				float elevationDetail =
+					noise.octaveNoise(
+						warped.x * 0.0060f,
+						warped.y * 0.0060f,
+						2,
+						0.5f
+					);
+
+				float elevation =
+					elevationLarge * 0.65f +
+					elevationMedium * 0.25f +
+					elevationDetail * 0.10f;
 
 
 				// make mountains rarer
 				elevation =
 					std::pow(
 						elevation,
-						1.2f
+						1.1f
 					);
 
 
 				// stretch range
-				elevation =
-					elevation * 1.25f;
+				elevation *= 1.25f;
 
 
 				elevation =
@@ -399,6 +363,15 @@ void Map::generateTerrain(WorldType type)
 						1.f
 					);
 
+				float mountainField =
+					noise.octaveNoise(
+						warped.x * 0.0007f,
+						warped.y * 0.0007f,
+						3,
+						0.5f
+					);
+
+				elevation += mountainField * 0.1f;
 
 				tile.setElevation(elevation);
 
@@ -539,7 +512,7 @@ void Map::generateTerrain(WorldType type)
 			{
 				e = Elevation::Flat;
 			}
-			else if (h < 0.85f)
+			else if (h < 0.75f)
 			{
 				e = Elevation::Hill;
 			}
