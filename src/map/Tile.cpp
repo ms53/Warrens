@@ -41,8 +41,10 @@ void Tile::draw(sf::RenderWindow& window)
  }
 
  Elevation Tile::classifyElevation(float h) {
+	 if (h < 0.20f)
+		 return Elevation::Deep_Sea;
 	 if (h < 0.40f)
-		 return Elevation::Below_Sea_Level;
+		 return Elevation::Shallow_Sea;
 
 	 if (h < 0.65f)
 		 return Elevation::Flat;

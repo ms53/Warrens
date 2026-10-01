@@ -27,7 +27,8 @@ enum class Elevation {
 	Mountain,
 	Hill,
 	Flat,
-	Below_Sea_Level
+	Shallow_Sea,
+	Deep_Sea
 };
 
 enum class Humidity {

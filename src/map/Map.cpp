@@ -227,7 +227,6 @@ void Map::generateTerrain(WorldType type)
 		);
 	}
 
-	std::vector<ContinentSeed> seeds;
 
 	const WorldGenProfile& profile = getWorldProfile(type);
 
@@ -244,7 +243,6 @@ void Map::generateTerrain(WorldType type)
 	if (type == WorldType::Continents)
 	{
 		float seaLevel = 0.4f;
-
 
 		for (Tile& tile : tiles)
 		{
@@ -296,15 +294,15 @@ void Map::generateTerrain(WorldType type)
 
 			float coast =
 				noise.octaveNoise(
-					pos.x * 0.0025f,
-					pos.y * 0.0025f,
+					pos.x * 0.001f,
+					pos.y * 0.001f,
 					3,
 					0.5f
 				);
 
 
 			continent +=
-				(coast - 0.5f) * 0.20f;
+				(coast - 0.5f) * 0.10f;
 
 
 
@@ -314,46 +312,47 @@ void Map::generateTerrain(WorldType type)
 
 			if (continent > seaLevel)
 			{
+				
 				float elevationLarge =
 					noise.octaveNoise(
-						warped.x * 0.0009f,
-						warped.y * 0.0009f,
-						4,
+						warped.x * 0.00075f,
+						warped.y * 0.00075f,
+						3,
 						0.55f
 					);
 
 				float elevationMedium =
 					noise.octaveNoise(
-						warped.x * 0.0020f,
-						warped.y * 0.0020f,
+						warped.x * 0.00015f,
+						warped.y * 0.00015f,
 						3,
 						0.5f
 					);
 
 				float elevationDetail =
 					noise.octaveNoise(
-						warped.x * 0.0060f,
-						warped.y * 0.0060f,
-						2,
+						warped.x * 0.0030f,
+						warped.y * 0.0030f,
+						1,
 						0.5f
 					);
 
 				float elevation =
-					elevationLarge * 0.65f +
+					elevationLarge * 0.70f +
 					elevationMedium * 0.25f +
-					elevationDetail * 0.10f;
+					elevationDetail * 0.05f;
 
 
 				// make mountains rarer
 				elevation =
 					std::pow(
 						elevation,
-						1.1f
+						1.45f
 					);
 
 
 				// stretch range
-				elevation *= 1.25f;
+				elevation *= 1.45f;
 
 
 				elevation =
@@ -379,7 +378,13 @@ void Map::generateTerrain(WorldType type)
 			}
 			else
 			{
-				tile.setElevation(0.f);
+				// Ocean:
+				float depth = (seaLevel - continent) / seaLevel;
+
+				// Map ocean to 0.0 - 0.4
+				float oceanElevation = depth * 0.4f;
+
+				tile.setElevation(-oceanElevation);
 			}
 		}
 	}
@@ -495,6 +500,10 @@ void Map::generateTerrain(WorldType type)
 	{
 		float maxH = 0.f;
 		float minH = 1.f;
+		float DPMean = 0.f, SHMean = 0.f, FLMean = 0.f, HLMean = 0.f, MTMean = 0.f;
+		int DPCount = 0, SHCount = 0, FLCount = 0, HLCount = 0, MTCount = 0;
+		float DPMinCount = 0, SHMinCount = 0, FLMinCount = 0, HLMinCount = 0, MTMinCount = 0;
+		float DPMaxCount = 0, SHMaxCount = 0, FLMaxCount = 0, HLMaxCount = 0, MTMaxCount = 0;
 		for (Tile& tile : tiles)
 		{
 			float h =
@@ -502,23 +511,47 @@ void Map::generateTerrain(WorldType type)
 			if (h > maxH) maxH = h;
 			if (h < minH) minH = h;
 			Elevation e;
+			
 
-
-			if (h <= 0.0f)
+			if (h <= -0.0375f)
 			{
-				e = Elevation::Below_Sea_Level;
+				e = Elevation::Deep_Sea;
+				DPCount++;
+				DPMean += h;
+				if (h > DPMaxCount) DPMaxCount = h;
+				if (h < DPMinCount) DPMinCount = h;
+			}
+			else if (h < 0.0f)
+			{
+				e = Elevation::Shallow_Sea;
+				SHCount++;
+				SHMean += h;
+				if (h > SHMaxCount) SHMaxCount = h;
+				if (h < SHMinCount) SHMinCount = h;
 			}
 			else if (h < 0.65f)
 			{
 				e = Elevation::Flat;
+				FLCount++;
+				FLMean += h;
+				if (h > FLMaxCount) FLMaxCount = h;
+				if (h < FLMinCount) FLMinCount = h;
 			}
 			else if (h < 0.75f)
 			{
 				e = Elevation::Hill;
+				HLCount++;
+				HLMean += h;
+				if (h > HLMaxCount) HLMaxCount = h;
+				if (h < HLMinCount) HLMinCount = h;
 			}
 			else
 			{
 				e = Elevation::Mountain;
+				MTCount++;
+				MTMean += h;
+				if (h > MTMaxCount) MTMaxCount = h;
+				if (h < MTMinCount) MTMinCount = h;
 			}
 
 
@@ -527,7 +560,10 @@ void Map::generateTerrain(WorldType type)
 
 			switch (e)
 			{
-			case Elevation::Below_Sea_Level:
+			case Elevation::Shallow_Sea:
+				tile.setColor(sf::Color(60, 80, 220));
+				break;
+			case Elevation::Deep_Sea:
 				tile.setColor(sf::Color(20, 40, 180));
 				break;
 
@@ -545,6 +581,11 @@ void Map::generateTerrain(WorldType type)
 			}
 		}
 		std::cout << "Min Height: " << minH << ", Max Height: " << maxH;
+		std::cout << "\nDeep Sea Count: " << DPCount << ", Mean: " << (DPCount > 0 ? DPMean / DPCount : 0.f) << " Min: " << DPMinCount << " Max: " << DPMaxCount;
+		std::cout << "\nShallow Sea Count: " << SHCount << ", Mean: " << (SHCount > 0 ? SHMean / SHCount : 0.f) << " Min: " << SHMinCount << " Max: " << SHMaxCount;
+		std::cout << "\nFlat Count: " << FLCount << ", Mean: " << (FLCount > 0 ? FLMean / FLCount : 0.f) << " Min: " << FLMinCount << " Max: " << FLMaxCount;
+		std::cout << "\nHill Count: " << HLCount << ", Mean: " << (HLCount > 0 ? HLMean / HLCount : 0.f) << " Min: " << HLMinCount << " Max: " << HLMaxCount;
+		std::cout << "\nMountain Count: " << MTCount << ", Mean: " << (MTCount > 0 ? MTMean / MTCount : 0.f) << " Min: " << MTMinCount << " Max: " << MTMaxCount;
 	}
 
 	else
@@ -594,7 +635,10 @@ void Map::generateTerrain(WorldType type)
 
 
 			if (h < seaLevel)
-				e = Elevation::Below_Sea_Level;
+				if (h < seaLevel/2)
+					e = Elevation::Deep_Sea;
+				else
+					e = Elevation::Shallow_Sea;
 
 			else if (h < hillLevel)
 				e = Elevation::Flat;
@@ -611,7 +655,10 @@ void Map::generateTerrain(WorldType type)
 
 			switch (e)
 			{
-			case Elevation::Below_Sea_Level:
+			case Elevation::Shallow_Sea:
+				tile.setColor(sf::Color(60, 80, 240));
+				break;
+			case Elevation::Deep_Sea:
 				tile.setColor(sf::Color(20, 40, 180));
 				break;
 
@@ -647,7 +694,7 @@ void Map::pruneIsthmuses(float seaLevel)
 		for (int x = 0; x < width; x++)
 		{
 			Tile* t = getTile(x, y);
-			if (t->getElevationType() == Elevation::Below_Sea_Level)
+			if (t->getElevationType() == Elevation::Deep_Sea || t->getElevationType() == Elevation::Shallow_Sea)
 				continue;
 
 			getNeighbors(x, y, neighbors);
@@ -655,7 +702,7 @@ void Map::pruneIsthmuses(float seaLevel)
 			std::vector<Tile*> landNeighbors;
 			for (Tile* n : neighbors)
 			{
-				if (n->getElevationType() != Elevation::Below_Sea_Level)
+				if (t->getElevationType() != Elevation::Deep_Sea && t->getElevationType() != Elevation::Shallow_Sea)
 					landNeighbors.push_back(n);
 			}
 
@@ -676,7 +723,7 @@ void Map::pruneIsthmuses(float seaLevel)
 
 	for (int idx : toFlip)
 	{
-		tiles[idx].setElevationType(Elevation::Below_Sea_Level);
+		tiles[idx].setElevationType(Elevation::Shallow_Sea);
 		tiles[idx].setColor(sf::Color(20, 40, 180));
 	}
 }
