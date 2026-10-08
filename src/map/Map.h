@@ -23,23 +23,24 @@ private:
 	MapSize mapSize;
 
 	struct ContinentSeed { sf::Vector2f pos; float radius; };
-	std::vector<ContinentSeed> generateContinentSeeds(int count, unsigned int seed);
-	float continentMask(const sf::Vector2f& pos,
-		const std::vector<ContinentSeed>& seeds,
-		Perlin& noise) const;
-	void pruneIsthmuses(float seaLevel);
 	float macroArchipelago(const sf::Vector2f& p, Perlin& n) const;
 	float macroContinents(const sf::Vector2f& p, Perlin& n) const;
 	float macroPangaea(const sf::Vector2f& p, Perlin& n) const;
 	float macroFractal(const sf::Vector2f& p, Perlin& n) const;
+	float macroInlandSea(const sf::Vector2f& p, Perlin& n) const;
 
 	float continentalFractal(const sf::Vector2f& p, Perlin& noise) const;
+	float archipelagoFractal(const sf::Vector2f& p,Perlin& noise) const;
+	float fractalFractal(const sf::Vector2f& p, Perlin& noise)const;
+	//float inlandSeaFractal(const sf::Vector2f& p, Perlin& noise) const;
 	sf::Vector2f warpPosition(const sf::Vector2f& pos, Perlin& noise) const;
+	bool isLand(const Tile& tile);
 
 public:
-	Map(MapSize size);
+	Map(MapSize size, WorldType type);
 	void draw(sf::RenderWindow& window);
 	void generateTerrain(WorldType type);
+	std::vector<std::vector<Tile*>> findLandmasses();
 
 	int getWidth() const { return width; }
 	int getHeight() const { return height; }

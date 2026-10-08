@@ -40,6 +40,16 @@ void Tile::draw(sf::RenderWindow& window)
 	 return TILE_SIZE;
  }
 
+ int Tile::getX() const
+ {
+	 return x;
+ }
+
+ int Tile::getY() const
+ {
+	 return y;
+ }
+
  Elevation Tile::classifyElevation(float h) {
 	 if (h < 0.20f)
 		 return Elevation::Deep_Sea;

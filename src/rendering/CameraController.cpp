@@ -1,6 +1,6 @@
 #include "CameraController.h"
 #include <iostream>
-static float const SPEED = 10.f;
+static float const SPEED = 5.f;
 void CameraController::update(Camera& camera,
     InputHandler& inputHandler,
     const sf::RenderWindow& window,

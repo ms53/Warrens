@@ -3,7 +3,7 @@
 
 Game::Game()
     : window(sf::VideoMode::getDesktopMode(), "Warrens", sf::Style::Close),
-    map(MapSize::MASSIVE),
+    map(MapSize::STANDARD, WorldType::Pangaea),
     camera(window, map, 0.f, 0.f)
 {
     

@@ -3,7 +3,8 @@
 #include <iostream>
 #include "Perlin.h"
 #include <random>
-Map::Map(MapSize size)
+#include <queue>
+Map::Map(MapSize size, WorldType type)
 {
 	mapSize = size;
 	switch (size)
@@ -24,7 +25,7 @@ Map::Map(MapSize size)
 			tiles.emplace_back(j, i);
 		}
 	}
-	generateTerrain(WorldType::Continents);
+	generateTerrain(type);
 }
 
 void Map::draw(sf::RenderWindow& window)
@@ -147,6 +148,43 @@ float Map::macroFractal(const sf::Vector2f& p, Perlin& n) const
 	return v;
 }
 
+float Map::macroInlandSea(const sf::Vector2f& p, Perlin& noise) const
+{
+	const sf::Vector2f center(
+		mapWorldWidth * 0.5f,
+		mapWorldHeight * 0.5f
+	);
+
+	// Size of the inland sea.
+	// Adjust these independently to make it wider/narrower.
+	const float radiusX = mapWorldWidth * 0.4f;
+	const float radiusY = mapWorldHeight * 0.4f;
+
+	float dx = (p.x - center.x) / radiusX;
+	float dy = (p.y - center.y) / radiusY;
+
+	// 1 at centre, 0 at the nominal coastline.
+	float distance = std::sqrt(dx * dx + dy * dy);
+	float basin = distance - 1.0f;
+
+	// Low-frequency noise makes the coastline irregular.
+	float coastNoise =
+		noise.octaveNoise(
+			p.x * 0.0012f,
+			p.y * 0.0012f,
+			3,
+			0.5f
+		);
+
+	basin += (coastNoise - 0.5f) * 0.30f;
+
+	// Convert to a land/water value.
+	//
+	// > 0 = land
+	// < 0 = water
+	return basin;
+}
+
 
 float Map::continentalFractal(const sf::Vector2f& p, Perlin& noise) const
 {
@@ -189,6 +227,81 @@ float Map::continentalFractal(const sf::Vector2f& p, Perlin& noise) const
 	return result;
 }
 
+float Map::archipelagoFractal(const sf::Vector2f& p, Perlin& noise) const
+{
+	float archipelagoScale = 0.001f / mapWorldWidth; // NOTE!!! NUMERATOR MAY NEED TO BE ADJUSTED (IE. archipelagoScale < 0.001f)
+
+	float large =
+		noise.octaveNoise(
+			p.x * archipelagoScale,
+			p.y * archipelagoScale,
+			4,
+			0.55f
+		);
+
+	float medium =
+		noise.octaveNoise(
+			p.x * 0.00075f,
+			p.y * 0.00075f,
+			3,
+			0.5f
+		);
+	float detail =
+		noise.octaveNoise(
+			p.x * 0.0035f,
+			p.y * 0.0035f,
+			2,
+			0.5f
+		);
+	float result =
+		large * 0.65f +
+		medium * 0.25f +
+		detail * 0.10f;
+
+
+	return result;
+}
+float Map::fractalFractal(const sf::Vector2f& p, Perlin& noise) const {
+	float fractalScale = 0.1f / mapWorldWidth; // NOTE!!! NUMERATOR MAY NEED TO BE ADJUSTED (IE. archipelagoScale < 0.001f)
+
+	float large =
+		noise.octaveNoise(
+			p.x * fractalScale,
+			p.y * fractalScale,
+			5,
+			0.55f
+		);
+
+
+	float medium =
+		noise.octaveNoise(
+			p.x * 0.00065f,
+			p.y * 0.00065f,
+			4,
+			0.5f
+		);
+
+
+	float detail =
+		noise.octaveNoise(
+			p.x * 0.0035f,
+			p.y * 0.0035f,
+			3,
+			0.5f
+		);
+
+
+	// Large shapes dominate
+	float result =
+		large * 0.55f +
+		medium * 0.25f +
+		detail * 0.20f;
+
+
+	return result;
+}
+
+
 sf::Vector2f Map::warpPosition(
 	const sf::Vector2f& p,
 	Perlin& noise
@@ -220,290 +333,588 @@ sf::Vector2f Map::warpPosition(
 
 void Map::generateTerrain(WorldType type)
 {
-	if (type == WorldType::Pangaea)
-	{
-		throw std::runtime_error(
-			"This world type generation is not implemented yet."
-		);
-	}
+	
 
 
 	const WorldGenProfile& profile = getWorldProfile(type);
+	
 
-	Perlin noise(time(nullptr));
-
-	std::vector<float> heights;
-	heights.reserve(tiles.size());
-
-
+	
 	// =====================================================
 	// CONTINENT GENERATION
 	// =====================================================
-
-	if (type == WorldType::Continents)
-	{
-		float seaLevel = 0.4f;
-
-		for (Tile& tile : tiles)
+	bool condition = true;
+	bool foundValidWorld = false;
+	int attempts = 0;
+	while (true) {
+		Perlin noise(time(nullptr));
+		std::vector<float> heights;
+		heights.reserve(tiles.size());
+		float maxH = 0.f;
+		float minH = 1.f;
+		float DPMean = 0.f, SHMean = 0.f, FLMean = 0.f, HLMean = 0.f, MTMean = 0.f;
+		float DPCount = 0, SHCount = 0, FLCount = 0, HLCount = 0, MTCount = 0;
+		float DPMinCount = 0, SHMinCount = 0, FLMinCount = 0, HLMinCount = 0, MTMinCount = 0;
+		float DPMaxCount = 0, SHMaxCount = 0, FLMaxCount = 0, HLMaxCount = 0, MTMaxCount = 0;
+		if (type == WorldType::Continents || type == WorldType::Pangaea || type == WorldType::Terra)
 		{
-			sf::Vector2f pos =
-				tile.getHex().getPosition();
+			float seaLevel = 0.4f;
 
-
-			// distort coordinates
-			sf::Vector2f warped =
-				warpPosition(pos, noise);
-
-
-			// ===================================
-			// Continental scale
-			// ===================================
-
-			float continent =
-				continentalFractal(
-					warped,
-					noise
-				);
-
-
-			// make continents larger
-			continent =
-				std::pow(
-					continent,
-					1.3f //Originally 1.35f
-				);
-
-
-			// ===================================
-			// latitude effect
-			// ===================================
-
-			float latitude =
-				std::abs(
-					pos.y / mapWorldHeight - 0.5f
-				);
-
-
-			continent -= latitude * 0.12f;
-
-
-
-			// ===================================
-			// coastline breakup
-			// ===================================
-
-			float coast =
-				noise.octaveNoise(
-					pos.x * 0.001f,
-					pos.y * 0.001f,
-					3,
-					0.5f
-				);
-
-
-			continent +=
-				(coast - 0.5f) * 0.10f;
-
-
-
-			// ===================================
-			// land / ocean
-			// ===================================
-
-			if (continent > seaLevel)
+			for (Tile& tile : tiles)
 			{
-				
-				float elevationLarge =
-					noise.octaveNoise(
-						warped.x * 0.00075f,
-						warped.y * 0.00075f,
-						3,
-						0.55f
+				sf::Vector2f pos =
+					tile.getHex().getPosition();
+
+
+				// distort coordinates
+				sf::Vector2f warped =
+					warpPosition(pos, noise);
+
+
+				// ===================================
+				// Continental scale
+				// ===================================
+
+				float continent =
+					continentalFractal(
+						warped,
+						noise
 					);
 
-				float elevationMedium =
-					noise.octaveNoise(
-						warped.x * 0.00015f,
-						warped.y * 0.00015f,
-						3,
-						0.5f
-					);
 
-				float elevationDetail =
-					noise.octaveNoise(
-						warped.x * 0.0030f,
-						warped.y * 0.0030f,
-						1,
-						0.5f
-					);
-
-				float elevation =
-					elevationLarge * 0.70f +
-					elevationMedium * 0.25f +
-					elevationDetail * 0.05f;
-
-
-				// make mountains rarer
-				elevation =
+				// make continents larger
+				continent =
 					std::pow(
-						elevation,
-						1.45f
+						continent,
+						1.2f //Originally 1.35f
 					);
 
 
-				// stretch range
-				elevation *= 1.45f;
+				// ===================================
+				// latitude effect
+				// ===================================
+
+				float latitude =
+					std::abs(
+						pos.y / mapWorldHeight - 0.5f
+					);
 
 
-				elevation =
+				continent -= latitude * 0.12f;
+
+
+
+
+
+
+
+				// ===================================
+				// land / ocean
+				// ===================================
+
+				if (continent > seaLevel)
+				{
+
+					float elevationLarge =
+						noise.octaveNoise(
+							warped.x * 0.00075f,
+							warped.y * 0.00075f,
+							3,
+							0.55f
+						);
+
+					float elevationMedium =
+						noise.octaveNoise(
+							warped.x * 0.00015f,
+							warped.y * 0.00015f,
+							3,
+							0.5f
+						);
+
+					float elevationDetail =
+						noise.octaveNoise(
+							warped.x * 0.0030f,
+							warped.y * 0.0030f,
+							1,
+							0.5f
+						);
+
+					float elevation =
+						elevationLarge * 0.70f +
+						elevationMedium * 0.25f +
+						elevationDetail * 0.05f;
+
+
+					// make mountains rarer
+					elevation =
+						std::pow(
+							elevation,
+							1.45f
+						);
+
+
+					// stretch range
+					elevation *= 1.45f;
+
+
+					elevation =
+						std::clamp(
+							elevation,
+							0.f,
+							1.f
+						);
+
+					float mountainField =
+						noise.octaveNoise(
+							warped.x * 0.0007f,
+							warped.y * 0.0007f,
+							3,
+							0.5f
+						);
+
+					elevation += mountainField * 0.1f;
+
+					tile.setElevation(elevation);
+
+					heights.push_back(elevation);
+				}
+				else
+				{
+					// Ocean:
+					float depth = (seaLevel - continent) / seaLevel;
+
+					// Map ocean to 0.0 - 0.4
+					float oceanElevation = depth * 0.4f;
+
+					tile.setElevation(-oceanElevation);
+				}
+			}
+		}
+
+		else if (type == WorldType::Archipelago) {
+			float seaLevel = 0.4f;
+			for (Tile& tile : tiles)
+			{
+				sf::Vector2f pos =
+					tile.getHex().getPosition();
+
+
+				// distort coordinates
+				sf::Vector2f warped =
+					warpPosition(pos, noise);
+
+
+				// ===================================
+				// Continental scale
+				// ===================================
+
+				float continent =
+					archipelagoFractal(
+						warped,
+						noise
+					);
+
+
+				// make continents larger
+				continent =
+					std::pow(
+						continent,
+						1.3f //Originally 1.35f
+					);
+
+
+				// ===================================
+				// latitude effect
+				// ===================================
+
+				float latitude =
+					std::abs(
+						pos.y / mapWorldHeight - 0.5f
+					);
+
+
+				continent -= latitude * 0.12f;
+
+				// ===================================
+				// land / ocean
+				// ===================================
+
+				if (continent > seaLevel)
+				{
+
+					float elevationLarge =
+						noise.octaveNoise(
+							warped.x * 0.00075f,
+							warped.y * 0.00075f,
+							3,
+							0.55f
+						);
+
+					float elevationMedium =
+						noise.octaveNoise(
+							warped.x * 0.00015f,
+							warped.y * 0.00015f,
+							3,
+							0.5f
+						);
+
+					float elevationDetail =
+						noise.octaveNoise(
+							warped.x * 0.0030f,
+							warped.y * 0.0030f,
+							1,
+							0.5f
+						);
+
+					float elevation =
+						elevationLarge * 0.70f +
+						elevationMedium * 0.25f +
+						elevationDetail * 0.05f;
+
+
+					// make mountains rarer
+					elevation =
+						std::pow(
+							elevation,
+							1.7f
+						);
+
+
+					// stretch range
+					elevation *= 1.45f;
+
+
+					elevation =
+						std::clamp(
+							elevation,
+							0.f,
+							1.f
+						);
+
+					float mountainField =
+						noise.octaveNoise(
+							warped.x * 0.0007f,
+							warped.y * 0.0007f,
+							3,
+							0.5f
+						);
+
+					elevation += mountainField * 0.1f;
+
+					tile.setElevation(elevation);
+
+					heights.push_back(elevation);
+				}
+				else
+				{
+					// Ocean:
+					float depth = (seaLevel - continent) / seaLevel;
+
+					// Map ocean to 0.0 - 0.4
+					float oceanElevation = depth * 0.4f;
+
+					tile.setElevation(-oceanElevation);
+				}
+			}
+		}
+
+		else if (type == WorldType::Fractal) {
+			float seaLevel = 0.4f;
+
+			for (Tile& tile : tiles)
+			{
+				sf::Vector2f pos =
+					tile.getHex().getPosition();
+
+
+				// distort coordinates
+				sf::Vector2f warped =
+					warpPosition(pos, noise);
+
+
+				// ===================================
+				// Continental scale
+				// ===================================
+
+				float continent =
+					fractalFractal(
+						warped,
+						noise
+					);
+
+
+				// make continents larger
+				continent =
+					std::pow(
+						continent,
+						1.2f //Originally 1.35f
+					);
+
+
+				// ===================================
+				// latitude effect
+				// ===================================
+
+				float latitude =
+					std::abs(
+						pos.y / mapWorldHeight - 0.5f
+					);
+
+
+				continent -= latitude * 0.12f;
+
+
+
+
+
+
+
+				// ===================================
+				// land / ocean
+				// ===================================
+
+				if (continent > seaLevel)
+				{
+
+					float elevationLarge =
+						noise.octaveNoise(
+							warped.x * 0.00075f,
+							warped.y * 0.00075f,
+							3,
+							0.55f
+						);
+
+					float elevationMedium =
+						noise.octaveNoise(
+							warped.x * 0.00015f,
+							warped.y * 0.00015f,
+							3,
+							0.5f
+						);
+
+					float elevationDetail =
+						noise.octaveNoise(
+							warped.x * 0.0030f,
+							warped.y * 0.0030f,
+							1,
+							0.5f
+						);
+
+					float elevation =
+						elevationLarge * 0.70f +
+						elevationMedium * 0.25f +
+						elevationDetail * 0.05f;
+
+
+					// make mountains rarer
+					elevation =
+						std::pow(
+							elevation,
+							1.45f
+						);
+
+
+					// stretch range
+					elevation *= 1.45f;
+
+
+					elevation =
+						std::clamp(
+							elevation,
+							0.f,
+							1.f
+						);
+
+					float mountainField =
+						noise.octaveNoise(
+							warped.x * 0.0007f,
+							warped.y * 0.0007f,
+							3,
+							0.5f
+						);
+
+					elevation += mountainField * 0.1f;
+
+					tile.setElevation(elevation);
+
+					heights.push_back(elevation);
+				}
+				else
+				{
+					// Ocean:
+					float depth = (seaLevel - continent) / seaLevel;
+
+					// Map ocean to 0.0 - 0.4
+					float oceanElevation = depth * 0.4f;
+
+					tile.setElevation(-oceanElevation);
+				}
+			}
+		}
+
+		else if (type == WorldType::InlandSea) {
+			for (Tile& tile : tiles)
+			{
+				sf::Vector2f pos = tile.getHex().getPosition();
+
+				sf::Vector2f warped = warpPosition(pos, noise);
+
+				float basin = macroInlandSea(warped, noise);
+
+				if (basin < 0.0f)
+				{
+					float depth = std::clamp(-basin, 0.0f, 1.0f);
+					float oceanElevation = depth * 0.4f;
+					tile.setElevation(-oceanElevation);
+				}
+				else {
+					float elevationLarge =
+						noise.octaveNoise(
+							warped.x * 0.00075f,
+							warped.y * 0.00075f,
+							3,
+							0.55f
+						);
+					float elevationMedium =
+						noise.octaveNoise(
+							warped.x * 0.00015f,
+							warped.y * 0.00015f,
+							3,
+							0.5f
+						);
+					float elevationDetail =
+						noise.octaveNoise(
+							warped.x * 0.0030f,
+							warped.y * 0.0030f,
+							1,
+							0.5f
+						);
+					float elevation =
+						elevationLarge * 0.70f +
+						elevationMedium * 0.25f +
+						elevationDetail * 0.05f;
+					elevation = std::pow(elevation, 1.45f);
+					elevation *= 1.45f;
+					elevation = std::clamp(elevation, 0.f, 1.f);
+					float mountainField =
+						noise.octaveNoise(
+							warped.x * 0.0007f,
+							warped.y * 0.0007f,
+							3,
+							0.5f
+						);
+					elevation += mountainField * 0.1f;
+					tile.setElevation(elevation);
+				}
+				heights.push_back(tile.getElevation());
+			}
+		}
+		// =====================================================
+		// NORMAL PERLIN WORLDS
+		// =====================================================
+
+		else
+		{
+			auto macro = [&](const sf::Vector2f& p) -> float
+				{
+					switch (type)
+					{
+					case WorldType::Archipelago:
+						//return macroArchipelago(p, noise);
+
+					case WorldType::Continents:
+						//return macroContinents(p, noise);
+
+					case WorldType::Pangaea:
+						//return macroPangaea(p, noise);
+
+					case WorldType::Fractal:
+						//return macroFractal(p, noise);
+
+					case WorldType::Terra:
+						//return macroContinents(p, noise);
+
+					case WorldType::InlandSea:
+						return 1.0f - macroContinents(p, noise);
+					}
+
+					return 0.5f;
+				};
+
+
+			for (Tile& tile : tiles)
+			{
+				sf::Vector2f pos =
+					tile.getHex().getPosition();
+
+
+				float h =
+					macro(pos);
+
+
+				float warp =
+					noise.octaveNoise(
+						pos.x * 0.0005f,
+						pos.y * 0.0005f,
+						3,
+						0.5f
+					);
+
+
+				float wx =
+					(warp - 0.5f) *
+					profile.warpStrength *
+					200.f;
+
+				float wy =
+					(warp - 0.5f) *
+					profile.warpStrength *
+					200.f;
+
+
+				sf::Vector2f warped =
+				{
+					pos.x + wx,
+					pos.y + wy
+				};
+
+
+				float detail =
+					noise.octaveNoise(
+						warped.x * profile.detailScale,
+						warped.y * profile.detailScale,
+						5,
+						0.5f
+					);
+
+
+				h +=
+					(detail - 0.5f) *
+					0.25f;
+
+
+				h =
 					std::clamp(
-						elevation,
+						h,
 						0.f,
 						1.f
 					);
 
-				float mountainField =
-					noise.octaveNoise(
-						warped.x * 0.0007f,
-						warped.y * 0.0007f,
-						3,
-						0.5f
-					);
 
-				elevation += mountainField * 0.1f;
+				tile.setElevation(h);
 
-				tile.setElevation(elevation);
-
-				heights.push_back(elevation);
-			}
-			else
-			{
-				// Ocean:
-				float depth = (seaLevel - continent) / seaLevel;
-
-				// Map ocean to 0.0 - 0.4
-				float oceanElevation = depth * 0.4f;
-
-				tile.setElevation(-oceanElevation);
+				heights.push_back(h);
 			}
 		}
-	}
 
 
 
-	// =====================================================
-	// NORMAL PERLIN WORLDS
-	// =====================================================
-
-	else
-	{
-		auto macro = [&](const sf::Vector2f& p) -> float
-			{
-				switch (type)
-				{
-				case WorldType::Archipelago:
-					return macroArchipelago(p, noise);
-
-				case WorldType::Continents:
-					return macroContinents(p, noise);
-
-				case WorldType::Pangaea:
-					return macroPangaea(p, noise);
-
-				case WorldType::Fractal:
-					return macroFractal(p, noise);
-
-				case WorldType::Terra:
-					return macroContinents(p, noise);
-
-				case WorldType::InlandSea:
-					return 1.0f - macroContinents(p, noise);
-				}
-
-				return 0.5f;
-			};
-
-
-		for (Tile& tile : tiles)
-		{
-			sf::Vector2f pos =
-				tile.getHex().getPosition();
-
-
-			float h =
-				macro(pos);
-
-
-			float warp =
-				noise.octaveNoise(
-					pos.x * 0.0005f,
-					pos.y * 0.0005f,
-					3,
-					0.5f
-				);
-
-
-			float wx =
-				(warp - 0.5f) *
-				profile.warpStrength *
-				200.f;
-
-			float wy =
-				(warp - 0.5f) *
-				profile.warpStrength *
-				200.f;
-
-
-			sf::Vector2f warped =
-			{
-				pos.x + wx,
-				pos.y + wy
-			};
-
-
-			float detail =
-				noise.octaveNoise(
-					warped.x * profile.detailScale,
-					warped.y * profile.detailScale,
-					5,
-					0.5f
-				);
-
-
-			h +=
-				(detail - 0.5f) *
-				0.25f;
-
-
-			h =
-				std::clamp(
-					h,
-					0.f,
-					1.f
-				);
-
-
-			tile.setElevation(h);
-
-			heights.push_back(h);
-		}
-	}
+		// =====================================================
+		// CLASSIFICATION
+		// =====================================================
 
 
 
-	// =====================================================
-	// CLASSIFICATION
-	// =====================================================
-
-
-	if (type == WorldType::Continents)
-	{
-		float maxH = 0.f;
-		float minH = 1.f;
-		float DPMean = 0.f, SHMean = 0.f, FLMean = 0.f, HLMean = 0.f, MTMean = 0.f;
-		int DPCount = 0, SHCount = 0, FLCount = 0, HLCount = 0, MTCount = 0;
-		float DPMinCount = 0, SHMinCount = 0, FLMinCount = 0, HLMinCount = 0, MTMinCount = 0;
-		float DPMaxCount = 0, SHMaxCount = 0, FLMaxCount = 0, HLMaxCount = 0, MTMaxCount = 0;
 		for (Tile& tile : tiles)
 		{
 			float h =
@@ -511,7 +922,7 @@ void Map::generateTerrain(WorldType type)
 			if (h > maxH) maxH = h;
 			if (h < minH) minH = h;
 			Elevation e;
-			
+
 
 			if (h <= -0.0375f)
 			{
@@ -580,152 +991,127 @@ void Map::generateTerrain(WorldType type)
 				break;
 			}
 		}
-		std::cout << "Min Height: " << minH << ", Max Height: " << maxH;
-		std::cout << "\nDeep Sea Count: " << DPCount << ", Mean: " << (DPCount > 0 ? DPMean / DPCount : 0.f) << " Min: " << DPMinCount << " Max: " << DPMaxCount;
-		std::cout << "\nShallow Sea Count: " << SHCount << ", Mean: " << (SHCount > 0 ? SHMean / SHCount : 0.f) << " Min: " << SHMinCount << " Max: " << SHMaxCount;
-		std::cout << "\nFlat Count: " << FLCount << ", Mean: " << (FLCount > 0 ? FLMean / FLCount : 0.f) << " Min: " << FLMinCount << " Max: " << FLMaxCount;
-		std::cout << "\nHill Count: " << HLCount << ", Mean: " << (HLCount > 0 ? HLMean / HLCount : 0.f) << " Min: " << HLMinCount << " Max: " << HLMaxCount;
-		std::cout << "\nMountain Count: " << MTCount << ", Mean: " << (MTCount > 0 ? MTMean / MTCount : 0.f) << " Min: " << MTMinCount << " Max: " << MTMaxCount;
-	}
-
-	else
-	{
-		std::sort(
-			heights.begin(),
-			heights.end()
-		);
-
-
-		auto percentile =
-			[&](float p)
-			{
-				if (heights.empty())
-					return 0.5f;
-
-				return heights[
-					(size_t)
-						(
-							p *
-							(heights.size() - 1)
-							)
-				];
-			};
-
-
-		float seaLevel =
-			percentile(profile.landBias);
-
-
-		float hillLevel =
-			percentile(0.90f);
-
-
-		float mountainLevel =
-			percentile(0.97f);
-
-
-
-		for (Tile& tile : tiles)
+		std::vector<std::vector<Tile*>> landmasses = findLandmasses();
+		float maxLandmassSize = 0;
+		std::vector<Tile*> maxLandmass;
+		for (std::vector<Tile*> landmass : landmasses)
 		{
-			float h =
-				tile.getElevation();
-
-
-			Elevation e;
-
-
-			if (h < seaLevel)
-				if (h < seaLevel/2)
-					e = Elevation::Deep_Sea;
-				else
-					e = Elevation::Shallow_Sea;
-
-			else if (h < hillLevel)
-				e = Elevation::Flat;
-
-			else if (h < mountainLevel)
-				e = Elevation::Hill;
-
-			else
-				e = Elevation::Mountain;
-
-
-			tile.setElevationType(e);
-
-
-			switch (e)
-			{
-			case Elevation::Shallow_Sea:
-				tile.setColor(sf::Color(60, 80, 240));
-				break;
-			case Elevation::Deep_Sea:
-				tile.setColor(sf::Color(20, 40, 180));
-				break;
-
-			case Elevation::Flat:
-				tile.setColor(sf::Color(50, 200, 60));
-				break;
-
-			case Elevation::Hill:
-				tile.setColor(sf::Color(110, 110, 110));
-				break;
-
-			case Elevation::Mountain:
-				tile.setColor(sf::Color::White);
-				break;
+			if (landmass.size() > maxLandmassSize) {
+				maxLandmassSize = landmass.size();
+				maxLandmass = landmass;
 			}
 		}
+		float coastSize = 0;
+		for (Tile* tile : maxLandmass) {
+			std::vector<Tile*> neighbors;
+			getNeighbors(tile->getX(), tile->getY(), neighbors);
+			for (Tile* neighbor : neighbors) {
+				if (neighbor->getElevationType() == Elevation::Deep_Sea || neighbor->getElevationType() == Elevation::Shallow_Sea) {
+					coastSize++;
+					break;
+				}
+			}
+		}
+		float landPercentage = ((FLCount + HLCount + MTCount) / (DPCount + SHCount + FLCount + HLCount + MTCount));
+		float biggestLandmassPercentage = (maxLandmassSize / (FLCount + HLCount + MTCount));
+		float biggestLandmassCoastPercentage = coastSize / maxLandmassSize;
+		switch (type) {
+		case WorldType::Continents:
+		case WorldType::Terra: condition = landPercentage >= 0.35f && landPercentage <= 0.5f && biggestLandmassPercentage <= 0.6f;
+			break;
+		case WorldType::Archipelago: condition = biggestLandmassPercentage <= 0.25f;
+			break;
+		case WorldType::Pangaea: condition = biggestLandmassPercentage >= 0.9f && landPercentage >= 0.35f;
+			break;
+		case WorldType::Fractal: condition = landPercentage >= 0.35f && landPercentage <= 0.5f;
+		}
+		if (FLCount > 0 && condition ) {
+			std::cout << "Min Height: " << minH << ", Max Height: " << maxH;
+			std::cout << "\nDeep Sea Count: " << DPCount << ", Mean: " << (DPCount > 0 ? DPMean / DPCount : 0.f) << " Min: " << DPMinCount << " Max: " << DPMaxCount;
+			std::cout << "\nShallow Sea Count: " << SHCount << ", Mean: " << (SHCount > 0 ? SHMean / SHCount : 0.f) << " Min: " << SHMinCount << " Max: " << SHMaxCount;
+			std::cout << "\nFlat Count: " << FLCount << ", Mean: " << (FLCount > 0 ? FLMean / FLCount : 0.f) << " Min: " << FLMinCount << " Max: " << FLMaxCount;
+			std::cout << "\nHill Count: " << HLCount << ", Mean: " << (HLCount > 0 ? HLMean / HLCount : 0.f) << " Min: " << HLMinCount << " Max: " << HLMaxCount;
+			std::cout << "\nMountain Count: " << MTCount << ", Mean: " << (MTCount > 0 ? MTMean / MTCount : 0.f) << " Min: " << MTMinCount << " Max: " << MTMaxCount;
+			std::cout << "\nLandmass Count: " << landmasses.size();
+			std::cout << "\nLand as percentage of whole world: " << landPercentage * 100 << "%";
+			std::cout << "\nBiggest landmass as percentage of all land: " << (maxLandmassSize / (FLCount + HLCount + MTCount)) * 100 << "%";
+			std::cout << "\nCoast percentage of biggest landmass: " << biggestLandmassCoastPercentage * 100 << "%";
+			std::cout << "\nAttempts: " << attempts;
+			
+			foundValidWorld = true;
+			break;
+		}
+		attempts++;
 	}
+	if (!foundValidWorld) throw std::runtime_error("Failed to generate valid world terrain");
 
-
-	pruneIsthmuses(
-		type == WorldType::Continents
-		? 0.0f
-		: 0.5f
-	);
 }
-void Map::pruneIsthmuses(float seaLevel)
-{
+std::vector<std::vector<Tile*>> Map::findLandmasses() {
+	std::vector<std::vector<Tile*>> landmasses;
+
+	std::vector<bool> visited(tiles.size(), false);
+
 	std::vector<Tile*> neighbors;
-	std::vector<int> toFlip;
+	neighbors.reserve(6);
 
 	for (int y = 0; y < height; y++)
 	{
 		for (int x = 0; x < width; x++)
 		{
-			Tile* t = getTile(x, y);
-			if (t->getElevationType() == Elevation::Deep_Sea || t->getElevationType() == Elevation::Shallow_Sea)
+			int index = y * width + x;
+
+			if (visited[index])
 				continue;
+			Tile& start = tiles[index];
 
-			getNeighbors(x, y, neighbors);
-
-			std::vector<Tile*> landNeighbors;
-			for (Tile* n : neighbors)
+			if (!isLand(start))
 			{
-				if (t->getElevationType() != Elevation::Deep_Sea && t->getElevationType() != Elevation::Shallow_Sea)
-					landNeighbors.push_back(n);
+				visited[index] = true;
+				continue;
 			}
 
-			if (landNeighbors.size() == 2)
+			std::vector<Tile*> landmass;
+			std::queue<Tile*> queue;
+
+			visited[index] = true;
+			queue.push(&start);
+
+			while (!queue.empty())
 			{
-				std::vector<Tile*> n0Neighbors;
-				sf::Vector2i c0 = landNeighbors[0]->getCoords();
-				getNeighbors(c0.x, c0.y, n0Neighbors);
+				Tile* current = queue.front();
+				queue.pop();
 
-				bool adjacent = std::find(n0Neighbors.begin(), n0Neighbors.end(),
-					landNeighbors[1]) != n0Neighbors.end();
+				landmass.push_back(current);
+				getNeighbors(current->getX(), current->getY(), neighbors);
 
-				if (!adjacent)
-					toFlip.push_back(y * width + x);
+				for (Tile* neighbor : neighbors)
+				{
+					if (neighbor == nullptr)
+						continue;
+					int neighborIndex = neighbor->getY() * width + neighbor->getX();
+
+					if (visited[neighborIndex])
+						continue;
+					if (!isLand(*neighbor))
+						continue;
+					visited[neighborIndex] = true;
+					queue.push(neighbor);
+				}
 			}
+			landmasses.push_back(std::move(landmass));
 		}
 	}
 
-	for (int idx : toFlip)
-	{
-		tiles[idx].setElevationType(Elevation::Shallow_Sea);
-		tiles[idx].setColor(sf::Color(20, 40, 180));
-	}
+	return landmasses;
+}
+
+bool Map::isLand(const Tile& tile)
+{
+	Elevation e = tile.getElevationType();
+
+	return e == Elevation::Flat ||
+		e == Elevation::Hill ||
+		e == Elevation::Mountain;
 }
 
 void Map::updateWrapping(float cameraX)

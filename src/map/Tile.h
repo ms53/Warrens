@@ -69,6 +69,8 @@ public:
 	Tile(int x, int y);
 	void draw(sf::RenderWindow& window);
 	//int* getCoords();
+	int getX() const;
+	int getY() const;
 	sf::ConvexShape& getHex();
 	static float getTileSize();
 	void setColor(const sf::Color& color) {
