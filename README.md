@@ -13,9 +13,10 @@ a small warren to an expansive empire on a procedurally-generated world. This ga
 - Tile proximity system ✅
 - Horizontal edge-wrapping for maps ✅
 - Perlin noise implemented to procedurally generate terrain ✅
+- Refine terrain generation to allow for different world types (ie. Archipelago, Continental, Pangaea) ✅
+
  ### What is our roadmap?
  ##### Here is a list of features we would like to implement before a demo can be published:
- - Refine terrain generation to allow for different world types (ie. Archipelago, Continental, Pangaea)
  - Biomes (temperature x humidity) and rivers
  - Tile features (ie. Forests, resource deposits, plants & animals)
  - Interactable units and settlements (warrens)
